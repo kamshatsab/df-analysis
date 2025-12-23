@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+from datetime import datetime
+import os
 
 st.set_page_config(page_title="Анализ динамики фонда", layout="wide")
 
@@ -8,8 +10,32 @@ st.title("📊 Анализ изменений движения ДФ и спос
 st.write("Загрузите два файла для сравнения изменений в фонде.")
 
 # --- читаем справочник из репозитория ---
-# fond.csv рядом с app.py в GitHub
+# ВАЖНО: fond.csv должен лежать рядом с app.py в GitHub
 fond = pd.read_csv("fond.csv")
+
+# ---------------- ЛОГИРОВАНИЕ ----------------
+LOG_PATH = "usage_log.csv"
+
+def log_event(event: str, file1_name: str = "", file2_name: str = "") -> None:
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    row = pd.DataFrame([{
+        "timestamp": ts,
+        "event": event,
+        "file1": file1_name,
+        "file2": file2_name,
+    }])
+
+    if os.path.exists(LOG_PATH):
+        row.to_csv(LOG_PATH, mode="a", header=False, index=False)
+    else:
+        row.to_csv(LOG_PATH, mode="w", header=True, index=False)
+
+def read_last_logs(n: int = 100) -> pd.DataFrame:
+    if not os.path.exists(LOG_PATH):
+        return pd.DataFrame(columns=["timestamp", "event", "file1", "file2"])
+    df = pd.read_csv(LOG_PATH)
+    return df.tail(n).iloc[::-1].reset_index(drop=True)  # последние сверху
+# ------------------------------------------------
 
 # Блок загрузки файлов
 col1, col2 = st.columns(2)
@@ -77,20 +103,23 @@ if file1 and file2:
 
         # ---- ДОБАВЛЯЕМ НГДУ / ЦДНГ / ГУ ИЗ fond.csv ----
         cols_meta = ['Скважина', 'НГДУ', 'ЦДНГ', 'ГУ']
-
         missing = [c for c in cols_meta if c not in fond.columns]
         if missing:
             raise ValueError(f"В fond.csv нет колонок: {missing}. Нужны: {cols_meta}")
 
         meta = fond[cols_meta].drop_duplicates(subset=['Скважина'], keep='first').copy()
-
         final_table = final_table.merge(meta, on='Скважина', how='left')
 
-        # порядок колонок как нужно
+        # Порядок колонок как нужно
         final_table = final_table[['НГДУ', 'ЦДНГ', 'ГУ', 'Скважина', 'Пояснение']]
-
-        # сортировка
         final_table = final_table.sort_values(['НГДУ', 'ЦДНГ', 'ГУ', 'Скважина']).reset_index(drop=True)
+
+        # ---- ЛОГ: успешная обработка ----
+        log_event(
+            event="processed_files",
+            file1_name=getattr(file1, "name", ""),
+            file2_name=getattr(file2, "name", "")
+        )
 
         # Вывод на сайт
         st.subheader("Результат обработки:")
@@ -105,12 +134,24 @@ if file1 and file2:
 
         excel_data = to_excel(final_table)
 
-        st.download_button(
+        downloaded = st.download_button(
             label="📥 Скачать итоговый файл (Excel)",
             data=excel_data,
             file_name='анализ_динамики_фонда.xlsx',
             mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
+
+        # ---- ЛОГ: скачивание ----
+        if downloaded:
+            log_event(
+                event="downloaded_result",
+                file1_name=getattr(file1, "name", ""),
+                file2_name=getattr(file2, "name", "")
+            )
+
+        # ---- Показать лог ----
+        with st.expander("🧾 Лог использования (последние 100 записей)"):
+            st.dataframe(read_last_logs(100), use_container_width=True)
 
     except FileNotFoundError:
         st.error("Не найден файл fond.csv в репозитории. Загрузите fond.csv рядом с app.py в GitHub.")
