@@ -103,18 +103,20 @@ if file1 and file2:
             .apply(lambda s: '; '.join(sorted(set(s))))
         )
 
-        # ---- ДОБАВЛЯЕМ НГДУ / ЦДНГ / ГУ ИЗ fond.csv ----
-        cols_meta = ['Скважина', 'НГДУ', 'ЦДНГ', 'ГУ']
+        # ---- ДОБАВЛЯЕМ НГДУ / ЦДНГ / ГУ / Причина простоя / Способ эксплуатации ИЗ fond.csv ----
+        cols_meta = ['Скважина', 'НГДУ', 'ЦДНГ', 'ГУ', 'Причина простоя', 'Способ эксплуатации']
         missing = [c for c in cols_meta if c not in fond.columns]
         if missing:
             raise ValueError(f"В fond.csv нет колонок: {missing}. Нужны: {cols_meta}")
 
         meta = fond[cols_meta].drop_duplicates(subset=['Скважина'], keep='first').copy()
+        meta = meta.rename(columns={'Способ эксплуатации': 'Способ экспл'})
         final_table = final_table.merge(meta, on='Скважина', how='left')
 
+
         # Порядок колонок как нужно
-        final_table = final_table[['НГДУ', 'ЦДНГ', 'ГУ', 'Скважина', 'Пояснение']]
-        final_table = final_table.sort_values(['НГДУ', 'ЦДНГ', 'ГУ', 'Скважина']).reset_index(drop=True)
+        final_table = final_table[['НГДУ', 'ЦДНГ', 'ГУ', 'Причина простоя', 'Способ экспл', 'Скважина', 'Пояснение']]
+        final_table = final_table.sort_values(['НГДУ', 'ЦДНГ', 'ГУ', 'Причина простоя', 'Способ экспл', 'Скважина']).reset_index(drop=True)
 
         # ---- ЛОГ: успешная обработка ----
         log_event(
@@ -163,5 +165,6 @@ if file1 and file2:
             "Проверьте:\n"
             "1) В Excel есть лист 'Отчет'\n"
             "2) Колонки в Excel: Скважина, Состояние, Категория, Способ эксплуатации\n"
-            "3) В fond.csv есть колонки: Скважина, НГДУ, ЦДНГ, ГУ"
+            "3) В fond.csv есть колонки: Скважина, НГДУ, ЦДНГ, ГУ, Причина простоя, Способ эксплуатации "
         )
+        
