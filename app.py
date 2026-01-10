@@ -1,3 +1,4 @@
+```python
 import streamlit as st
 import pandas as pd
 from io import BytesIO
@@ -14,9 +15,18 @@ st.write("Загрузите два файла для сравнения изм�
 fond = pd.read_csv("fond.csv")
 fond.columns = fond.columns.str.replace('"', '').str.strip()
 
-# (рекомендация) чтобы не путаться с колонкой из Excel
-if "Способ эксплуатации" in fond.columns:
-    fond = fond.rename(columns={"Способ эксплуатации": "Способ эксплуатации (fond)"})
+# --- читаем справочник main_well из репозитория ---
+# ВАЖНО: main_well.csv должен лежать рядом с app.py в GitHub
+main_well = pd.read_csv("main_well.csv")
+main_well.columns = main_well.columns.str.replace('"', '').str.strip()
+main_well = main_well.rename(columns={'name': 'Скважина'})
+
+cols_main = ['Скважина', 'sedmax_ip', 'lora_id']
+missing_main = [c for c in cols_main if c not in main_well.columns]
+if missing_main:
+    raise ValueError(f"В main_well.csv нет колонок: {missing_main}. Нужны: {cols_main}")
+
+main_well = main_well[cols_main].drop_duplicates(subset=['Скважина'], keep='first').copy()
 
 # ---------------- ЛОГИРОВАНИЕ (локальный файл на сервере Streamlit) ----------------
 LOG_PATH = "usage_log.csv"
@@ -69,7 +79,7 @@ if file1 and file2:
         df1_raw = pd.read_excel(file1, sheet_name='Отчет', skiprows=4)
         df2_raw = pd.read_excel(file2, sheet_name='Отчет', skiprows=4)
 
-        # Фильтрация
+        # Фильтрация (для событий сравнения)
         def filter_data(df: pd.DataFrame) -> pd.DataFrame:
             return df[
                 (df['Состояние'].isin(['В работе', 'В простое'])) &
@@ -107,47 +117,55 @@ if file1 and file2:
             .apply(lambda s: '; '.join(sorted(set(s))))
         )
 
-        # ---- ДОБАВЛЯЕМ ИЗ fond.csv ----
-        cols_meta = ['Скважина', 'НГДУ', 'ЦДНГ', 'ГУ', 'Причина простоя', 'Способ эксплуатации (fond)']
-        missing = [c for c in cols_meta if c not in fond.columns]
-        if missing:
-            raise ValueError(f"В fond.csv нет колонок: {missing}. Нужны: {cols_meta}")
+        # ---- ДОБАВЛЯЕМ ИЗ fond.csv (ТОЛЬКО НГДУ/ЦДНГ/ГУ) ----
+        cols_fond = ['Скважина', 'НГДУ', 'ЦДНГ', 'ГУ']
+        missing_fond = [c for c in cols_fond if c not in fond.columns]
+        if missing_fond:
+            raise ValueError(f"В fond.csv нет колонок: {missing_fond}. Нужны: {cols_fond}")
 
-        meta = fond[cols_meta].drop_duplicates(subset=['Скважина'], keep='first').copy()
-        final_table = final_table.merge(meta, on='Скважина', how='left')
-        
+        meta_fond = fond[cols_fond].drop_duplicates(subset=['Скважина'], keep='first').copy()
+        final_table = final_table.merge(meta_fond, on='Скважина', how='left')
+
+        # ---- ДОБАВЛЯЕМ ИЗ 2-го файла (КОНЕЧНАЯ ДАТА): Причина простоя/Способ эксплуатации ----
+        cols_df2 = ['Скважина', 'Причина простоя', 'Способ эксплуатации']
+        missing_df2 = [c for c in cols_df2 if c not in filtered_df2.columns]
+        if missing_df2:
+            raise ValueError(f"Во 2-м файле нет колонок: {missing_df2}. Нужны: {cols_df2}")
+
+        meta_df2 = filtered_df2[cols_df2].drop_duplicates(subset=['Скважина'], keep='first').copy()
+        final_table = final_table.merge(meta_df2, on='Скважина', how='left')
+
+        # ---- ДОБАВЛЯЕМ sedmax_ip / lora_id ИЗ main_well.csv ----
+        final_table = final_table.merge(main_well, on='Скважина', how='left')
 
         # ---- ДОБАВЛЯЕМ ИЗ Reviziya.xlsx ----
         final_table = final_table.merge(reviziya, on='Скважина', how='left')
-        
+
         # --- ФОРМАТ ДАТ: ДД.ММ.ГГГГ ---
         date_cols = ['Дата ввода в эксплуатацию', 'Дата перевода в ДФ']
-        
         for col in date_cols:
             if col in final_table.columns:
-                final_table[col] = (
-                    pd.to_datetime(final_table[col], errors='coerce')
-                    .dt.strftime('%d.%m.%Y')
-                )
+                final_table[col] = pd.to_datetime(final_table[col], errors='coerce').dt.strftime('%d.%m.%Y')
 
-
-        # Порядок колонок как нужно
+        # Порядок колонок как нужно (Категория/Состояние НЕ выводим)
         final_table = final_table[
             [
                 'НГДУ',
                 'ЦДНГ',
                 'ГУ',
+                'Скважина',
                 'Причина простоя',
-                'Способ эксплуатации (fond)',
+                'Способ эксплуатации',
+                'sedmax_ip',
+                'lora_id',
                 'Дата ввода в эксплуатацию',
                 'Дата перевода в ДФ',
-                'Скважина',
                 'Пояснение'
             ]
         ]
 
-        # Сортировка (можно изменить)
-        final_table = final_table.sort_values(['НГДУ', 'ЦДНГ', 'ГУ', 'Скважина']).reset_index(drop=True)
+        # Сортировка
+        final_table = final_table.sort_values(['НГДУ', 'ЦДНГ', 'ГУ', 'Скважина'], na_position='last').reset_index(drop=True)
 
         # ---- ЛОГ: успешная обработка ----
         log_event(
@@ -190,13 +208,15 @@ if file1 and file2:
 
     except FileNotFoundError as e:
         st.error(f"Не найден файл в репозитории: {e}")
-        st.info("Проверьте, что fond.csv и Reviziya.xlsx загружены рядом с app.py в GitHub.")
+        st.info("Проверьте, что fond.csv, main_well.csv и Reviziya.xlsx загружены рядом с app.py в GitHub.")
     except Exception as e:
         st.error(f"Произошла ошибка при обработке: {e}")
         st.info(
             "Проверьте:\n"
             "1) В Excel есть лист 'Отчет'\n"
-            "2) Колонки в Excel: Скважина, Состояние, Категория, Способ эксплуатации\n"
-            "3) В fond.csv есть: Скважина, НГДУ, ЦДНГ, ГУ, Причина простоя, Способ эксплуатации\n"
-            "4) В Reviziya.xlsx есть: Скважина, Дата ввода в эксплуатацию, Дата перевода в Д/Ф"
+            "2) Во 2-м Excel есть колонки: Причина простоя, Способ эксплуатации\n"
+            "3) В fond.csv есть: Скважина, НГДУ, ЦДНГ, ГУ\n"
+            "4) В main_well.csv есть: name (или Скважина), sedmax_ip, lora_id\n"
+            "5) В Reviziya.xlsx есть: Скважина, Дата ввода в эксплуатацию, Дата перевода в Д/Ф"
         )
+```
