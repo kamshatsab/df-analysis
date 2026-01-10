@@ -218,4 +218,3 @@ if file1 and file2:
             "4) В main_well.csv есть: name (или Скважина), sedmax_ip, lora_id\n"
             "5) В Reviziya.xlsx есть: Скважина, Дата ввода в эксплуатацию, Дата перевода в Д/Ф"
         )
-```
