@@ -115,9 +115,21 @@ if file1 and file2:
 
         meta = fond[cols_meta].drop_duplicates(subset=['Скважина'], keep='first').copy()
         final_table = final_table.merge(meta, on='Скважина', how='left')
+        
 
         # ---- ДОБАВЛЯЕМ ИЗ Reviziya.xlsx ----
         final_table = final_table.merge(reviziya, on='Скважина', how='left')
+        
+        # --- ФОРМАТ ДАТ: ДД.ММ.ГГГГ ---
+        date_cols = ['Дата ввода в эксплуатацию', 'Дата перевода в ДФ']
+        
+        for col in date_cols:
+            if col in final_table.columns:
+                final_table[col] = (
+                    pd.to_datetime(final_table[col], errors='coerce')
+                    .dt.strftime('%d.%m.%Y')
+                )
+
 
         # Порядок колонок как нужно
         final_table = final_table[
